@@ -31,7 +31,6 @@ classifiers = [
     "Topic :: Office/Business :: Financial :: Investment",
     "Topic :: Scientific/Engineering :: Information Analysis",
 ]
-packages = [{ include = "pyeventbt" }]
 
 [tool.poetry.urls]
 Documentation = "https://pyeventbt.com"

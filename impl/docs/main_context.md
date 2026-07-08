@@ -62,7 +62,19 @@ Cada evento es procesado **secuencialmente**, garantizando que la estrategia nun
 
 ## 2. Arquitectura de Módulos de PyEventBT
 
-El framework expone un objeto `modules: Modules` dentro de la función de estrategia, que centraliza el acceso a todos los componentes del sistema.
+El repositorio tiene la siguiente organización clave, aislando completamente el framework de la implementación:
+
+*   **`pyeventbt/`**: Core framework (eventos, portfolio, data, ejecución). No se modifica.
+*   **`impl/`**: Todo el código personalizado, estrategias y scripts de testing.
+    *   **`brokers/`**: Lógicas de comisiones (Vantage), reutilizables.
+    *   **`strategies/`**: Contiene implementaciones de estrategias como packages modulares.
+        *   **`orb_advanced/`**: Estrategia principal refactorizada con `main.py` (entry point CLI).
+    *   **`backtest/`**: Entorno de testing centralizado.
+        *   **`run_backtest.py`**: Único script para correr múltiples combinaciones a la vez y generar un reporte unificado.
+        *   **`data_downloader.py`**: Script para descarga de datos.
+        *   **`historical_data/`**: Datasets en formato CSV/Parquet.
+        *   **`results/`**: Tablas resumen (.txt) generadas tras las simulaciones.
+    *   **`docs/`**: Documentación específica de tus implementaciones.
 
 ### 2.1 Strategy (Orquestador Principal)
 
@@ -321,9 +333,11 @@ Las estrategias desarrolladas o en proceso de desarrollo se encuentran documenta
 
 ### 5.1 Listado de Estrategias
 
-- **ORB Simple (Opening Range Breakout):** Estrategia de ruptura intradiaria basada en el rango de los primeros 30 minutos de sesión.
-  * [Estrategia ORB Simple Readme](file:///c:/trading/bots/pyeventbt/docs/strategies/strategy_orb_simple/readme.md)
-
+1.  **Backtest de combinación única**: `python impl/strategies/orb_advanced/main.py --mode BACKTEST --start-date 2026-06-01 --end-date 2026-07-01 --entry BREAKOUT --sl OPPOSITE_RANGE --tp FIXED_1R`
+2.  **Backtest de campaña completa**: Edita y ejecuta `python impl/backtest/run_backtest.py`
+3.  **Análisis de resultados**: Los logs y estadísticas se guardan en `impl/backtest/results/`.
+4.  **Live Trading**: `python impl/strategies/orb_advanced/main.py --mode LIVE`
+- Todas las estrategias están ubicadas en la carpeta `impl/strategies/`. Debes consultar el `readme.md` de cada estrategia para entender su funcionamiento en `impl/docs/strategies/<strategy_name>`.
 
 ---
 
