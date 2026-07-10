@@ -7,18 +7,18 @@ Modifica las fechas y combinaciones en la sección CONFIGURACIÓN DEL TEST.
 # =============================================================================
 # CONFIGURACIÓN DEL TEST
 # =============================================================================
-FROM_DATE = "2026-06-01"
-TO_DATE   = "2026-07-01"
+FROM_DATE = "2026-07-10"
+TO_DATE   = "2026-07-10"
 STRATEGY_PATH = "impl/strategies/orb_advanced/main.py"
 REPORT_NAME = "orb_advanced_report"
 
 COMBINATIONS = [
-    # Puedes usar "symbols" específicos (ej: ["XAUUSD", "BTCUSD"]) o dejarlo
-    # vacío/no poner la key para que use todos los del config.
-    {"symbols": ["XAUUSD", "BTCUSD"], "entry": "BREAKOUT", "sl": "OPPOSITE_RANGE", "tp": "FIXED_1R"},
-    {"symbols": ["XAUUSD", "BTCUSD"], "entry": "RETEST",   "sl": "OPPOSITE_RANGE", "tp": "TRAILING"},
-    
-    # Aquí puedes añadir más escenarios
+    # Símbolos con datos disponibles en el rango FROM_DATE–TO_DATE
+    {"symbols": ["XAUUSD", "NAS100"], "entry": "BREAKOUT",           "sl": "OPPOSITE_RANGE", "tp": "FIXED", "rr": 1.0},
+    {"symbols": ["XAUUSD", "NAS100"], "entry": "RETEST_ORB",         "sl": "OPPOSITE_RANGE", "tp": "FIXED", "rr": 1.5},
+    {"symbols": ["XAUUSD"],           "entry": "BREAKOUT",           "sl": "MID_RANGE",      "tp": "TRAILING"},
+    {"symbols": ["XAUUSD", "NAS100"], "entry": "BREAKOUT_CONFIRMED", "sl": "OPPOSITE_RANGE", "tp": "FIXED", "rr": 1.0},
+    {"symbols": ["XAUUSD"],           "entry": "FVG_RETEST",         "sl": "OPPOSITE_RANGE", "tp": "FIXED", "rr": 1.5},
 ]
 # =============================================================================
 
@@ -59,7 +59,7 @@ def parse_output(output: str) -> dict:
 def format_table(results: list, title: str) -> str:
     """Formatea la lista de resultados en una tabla ASCII limpia."""
     cols = [
-        ("#", 3), ("Scenario", 15), ("Entry", 10), ("SL", 16), ("TP", 12),
+        ("#", 3), ("Scenario", 15), ("Entry", 10), ("SL", 16), ("TP", 10), ("RR", 5),
         ("Trades", 7), ("TPs", 5), ("SLs", 5), ("WR%", 6),
         ("Net", 10), ("Gross", 10), ("Fees", 7), ("WideSL", 7), ("Expired", 8),
     ]
@@ -70,7 +70,7 @@ def format_table(results: list, title: str) -> str:
     lines.append("=" * sum(w + 1 for _, w in cols))
     
     # Header
-    hdr = "    " + " ".join(n.rjust(w) if n not in ("#", "Scenario", "Entry", "SL", "TP") else n.ljust(w) for n, w in cols)
+    hdr = "    " + " ".join(n.rjust(w) if n not in ("#", "Scenario", "Entry", "SL", "TP", "RR") else n.ljust(w) for n, w in cols)
     lines.append(hdr)
     lines.append("  " + "-" * (sum(w + 1 for _, w in cols) - 2))
     
@@ -78,12 +78,21 @@ def format_table(results: list, title: str) -> str:
         symbols_str = ",".join(r.get("symbols", ["ALL"]))
         if len(symbols_str) > 15: symbols_str = "MULTIPLE"
         
+        tp_val = r.get("tp", "?")
+        rr_val = r.get("rr", "")
+        display_tp = tp_val
+        display_rr = str(rr_val) if rr_val != "" else ""
+        if tp_val == "FIXED" and rr_val != "":
+            display_tp = "FIXED"
+            display_rr = str(rr_val)
+
         vals = [
             str(i + 1).ljust(3),
             symbols_str.ljust(15),
             str(r.get("entry", "?")).ljust(10),
             str(r.get("sl", "?")).ljust(16),
-            str(r.get("tp", "?")).ljust(12),
+            display_tp.ljust(10),
+            display_rr.rjust(5),
             str(r.get("trades", 0)).rjust(7),
             str(r.get("tp_count", 0)).rjust(5),
             str(r.get("sl_count", 0)).rjust(5),
@@ -111,7 +120,10 @@ def format_summary(results: list) -> str:
     worst_wr = min(valid, key=lambda x: x.get("winrate", 0))
     
     def get_name(r):
-        return f"{','.join(r.get('symbols',['ALL']))}_{r.get('entry')}_{r.get('sl')}_{r.get('tp')}"
+        tp_str = r.get('tp', '')
+        if tp_str == "FIXED" and "rr" in r:
+            tp_str = f"FIXED_{r['rr']}R"
+        return f"{','.join(r.get('symbols',['ALL']))}_{r.get('entry')}_{r.get('sl')}_{tp_str}"
 
     return "\n".join([
         f"  BEST NET PROFIT : {get_name(best_net)} -> ${best_net['net']:+.2f}  (WR={best_net.get('winrate',0):.1f}%, Trades={best_net.get('trades',0)})",
@@ -133,7 +145,10 @@ def main():
     os.makedirs(out_dir, exist_ok=True)
 
     for idx, combo in enumerate(COMBINATIONS):
-        label = f"{','.join(combo.get('symbols',['ALL']))}_{combo.get('entry', '')}_{combo.get('sl', '')}_{combo.get('tp', '')}"
+        tp_str = combo.get('tp', '')
+        if tp_str == "FIXED" and "rr" in combo:
+            tp_str = f"FIXED_{combo['rr']}R"
+        label = f"{','.join(combo.get('symbols',['ALL']))}_{combo.get('entry', '')}_{combo.get('sl', '')}_{tp_str}"
         print(f"\n{'='*70}")
         print(f"  [{idx+1}/{len(COMBINATIONS)}] {label}")
         print(f"{'='*70}")
@@ -145,12 +160,13 @@ def main():
         if "entry" in combo: cmd.extend(["--entry", str(combo["entry"])])
         if "sl" in combo: cmd.extend(["--sl", str(combo["sl"])])
         if "tp" in combo: cmd.extend(["--tp", str(combo["tp"])])
+        if "rr" in combo: cmd.extend(["--rr", str(combo["rr"])])
 
         try:
             proc = subprocess.run(cmd, capture_output=True, text=True, timeout=300, cwd=BASE)
             output = proc.stdout + proc.stderr
         except subprocess.TimeoutExpired:
-            output = "Timeout: 1\n"
+            output = "TIMEOUT_ERROR_OCURRED\n"
 
         parsed = parse_output(output)
         parsed.update(combo)

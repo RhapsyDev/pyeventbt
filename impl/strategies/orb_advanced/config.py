@@ -36,7 +36,7 @@ MODE = "BACKTEST"
 # Rango de descarga de datos históricos
 # =============================================================================
 DATA_FROM = datetime(year=2026, month=6, day=1, tzinfo=None)
-DATA_TO   = datetime(year=2027, month=8, day=1, tzinfo=None)
+DATA_TO   = datetime(year=2026, month=8, day=1, tzinfo=None)
 
 # Rango de simulación de backtest (subconjunto de datos descargados)
 BT_FROM = datetime(year=2026, month=6, day=1, tzinfo=None)
@@ -54,7 +54,7 @@ MT5_TIMEOUT  = 60000
 # =============================================================================
 # Capital inicial
 # =============================================================================
-STARTING_CAPITAL = 1000
+STARTING_CAPITAL = 10000
 
 # =============================================================================
 # Identificador de estrategia
@@ -64,24 +64,35 @@ STRATEGY_ID = "999001"
 # =============================================================================
 # Instrumentos a operar
 # =============================================================================
+# SYMBOL_CATEGORIES = {
+#     "metals":      ["XAUUSD"],
+#     "indices":     ["SP500", "NAS100"],
+#     "commodities": [],
+#     "crypto":      ["BTCUSD", "ETHUSD"],
+# }
 SYMBOL_CATEGORIES = {
-    "metals":      ["XAUUSD"],
-    "indices":     ["SP500", "NAS100"],
-    "commodities": ["XTIUSD"],
-    "crypto":      ["BTCUSD", "ETHUSD"],
+    #"metals":      ["XAUUSD"],
+    "indices":     ["NAS100"],
+    #"commodities": [],
+    #"crypto":      ["BTCUSD"],
 }
 SYMBOLS: list[str] = [s for cat in SYMBOL_CATEGORIES.values() for s in cat]
 
 # Mapeo de sufijos MT5 para cuentas swap-free (live únicamente)
-MT5_SYMBOL_MAP: dict[str, str] = {"XAUUSD": "XAUUSD+", "XTIUSD": "USOUSD"}
+MT5_SYMBOL_MAP: dict[str, str] = {"XAUUSD": "XAUUSD+"}
 
 # Símbolos que usa la estrategia internamente (sin sufijos)
 STRATEGY_SYMBOLS: list[str] = SYMBOLS  # sobreescrito en main.py tras saber el MODE
 
 # =============================================================================
+# Diferencia horaria broker vs UTC (para backtest con datos CSV en UTC)
+# =============================================================================
+UTC_OFFSET_HOURS = 3  # Vantage UTC+3
+
+# =============================================================================
 # Gestión de riesgo y capital
 # =============================================================================
-RISK_PCT        = 2.0                        # Riesgo total en % de la cuenta
+RISK_PCT        = 1.0                        # Riesgo total en % de la cuenta
 RR_RATIO        = 1.0                        # R:R fijo (para TP_FIXED_1R / TP_FIXED_1_5R)
 
 # =============================================================================
@@ -142,8 +153,10 @@ BREAKOUT_TIMEFRAME  = StrategyTimeframes.ONE_MIN    # Timeframe de detección de
 # =============================================================================
 
 class EntryMethod(str, Enum):
-    BREAKOUT = "BREAKOUT"   # Entrada inmediata al romper el ORB
-    RETEST   = "RETEST"     # Espera pullback al borde del ORB
+    BREAKOUT           = "BREAKOUT"            # Entrada inmediata al romper el ORB
+    RETEST_ORB         = "RETEST_ORB"          # Espera pullback al borde del ORB
+    BREAKOUT_CONFIRMED = "BREAKOUT_CONFIRMED"  # Breakout + filtros Volumen/VWAP/ATR
+    FVG_RETEST         = "FVG_RETEST"          # Retest del Fair Value Gap dejado por la breakout
 
 
 class SLMethod(str, Enum):
@@ -152,15 +165,19 @@ class SLMethod(str, Enum):
 
 
 class TPMethod(str, Enum):
-    FIXED_1R   = "FIXED_1R"    # TP fijo a 1:1 R:R
-    FIXED_1_5R = "FIXED_1_5R"  # TP fijo a 1:1.5 R:R
-    TRAILING   = "TRAILING"    # Trailing stop sin TP fijo
+    FIXED    = "FIXED"      # TP fijo a R:R configurable (vía --rr)
+    TRAILING = "TRAILING"   # Trailing stop sin TP fijo
 
 
 # Valores por defecto (sobreescribibles vía argparse en main.py)
 ENTRY_METHOD: EntryMethod = EntryMethod.BREAKOUT
 SL_METHOD:    SLMethod    = SLMethod.OPPOSITE_RANGE
-TP_METHOD:    TPMethod    = TPMethod.FIXED_1R
+TP_METHOD:    TPMethod    = TPMethod.FIXED
+
+# =============================================================================
+# Parámetros de FVG
+# =============================================================================
+FVG_MIN_POINTS = 5  # Gap mínimo en puntos del símbolo para considerar FVG válido
 
 # =============================================================================
 # Parámetros del Trailing Stop

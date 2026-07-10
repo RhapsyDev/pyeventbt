@@ -74,7 +74,9 @@ class ORBStateManager:
         self.days_tested:                  int                = 0
         self.trail_state:                  Dict[str, dict]    = {}
         self.closed_tickets:               Set[int]           = set()
+        self.detected_closes:              Set[int]           = set()
         self.summarized_sessions:          Set[str]           = set()
         self.session_positions:            Dict[str, Set[int]] = {}
         self.current_session_for_signal:   Dict[str, str]     = {}
         self.current_session:              str                = "---"
+        self.session_risk_pool:            Dict[str, dict]    = {}

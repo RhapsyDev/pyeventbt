@@ -56,3 +56,16 @@ class OrbSessionState:
 
         # --- Datos de volatilidad (para ATR del trailing) ---
         self.bar_ranges: list[Decimal] = []  # Rangos H-L de las velas 1m del ORB
+
+        # --- Datos para filtros de confirmación (volumen / VWAP) ---
+        self.orb_tickvols: list[int] = []           # tickvol de cada vela del ORB
+        self.orb_cumulative_tickvol: int = 0        # tickvol acumulado en ventana ORB
+        self.orb_cumulative_pv: Decimal = Decimal("0")  # sum(close × tickvol) para VWAP
+        self.breakout_bar_tickvol: int = 0          # tickvol de la vela de breakout
+        self.breakout_bar_range: Optional[Decimal] = None  # rango H-L de la vela breakout
+
+        # --- Datos para FVG detection (FVG_RETEST) ---
+        self.last_bar_high: Optional[Decimal] = None  # High de la última vela 1m (pre-breakout)
+        self.last_bar_low: Optional[Decimal] = None   # Low de la última vela 1m (pre-breakout)
+        self.fvg_high: Optional[Decimal] = None       # Borde superior del FVG
+        self.fvg_low: Optional[Decimal] = None        # Borde inferior del FVG

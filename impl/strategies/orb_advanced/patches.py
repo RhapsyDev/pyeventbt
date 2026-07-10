@@ -104,7 +104,7 @@ def apply_live_patches(state):
             return
         open_tickets = set(p.identifier for p in open_positions)
         for ticket in list(state.position_map.keys()):
-            if ticket in open_tickets or ticket in state.closed_tickets:
+            if ticket in open_tickets or ticket in state.detected_closes:
                 continue
             deals = mt5.history_deals_get(position=ticket)
             if not deals:
@@ -116,7 +116,7 @@ def apply_live_patches(state):
             if deals:
                 for deal in deals:
                     if deal.entry == 1:  # OUT
-                        state.closed_tickets.add(ticket)
+                        state.detected_closes.add(ticket)
                         self._generate_and_put_fill_event(
                             trade_deal=deal, events_queue=self.events_queue
                         )

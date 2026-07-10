@@ -266,6 +266,17 @@ def _download_dukascopy(
     sample = float(df.iloc[0].get("open", 0))
     fmt = _price_format(sample)
 
+    # Escalar volumen Dukascopy (en lots decimales) a entero significativo
+    # Ej: XAUUSD 0.04462 lotes -> 4462 (x100000)
+    #     BTCUSD 0.000344 lotes -> 3440 (x10000000)
+    import math
+    _sample_vol = float(df.iloc[0].get("volume", 0))
+    if _sample_vol > 0:
+        _digits = max(0, 4 - int(math.log10(_sample_vol)))
+        _vol_scale = 10 ** _digits
+    else:
+        _vol_scale = 1
+
     lines = 0
     with open(output_path, "w", encoding="utf-8") as f:
         for idx, row in df.iterrows():
@@ -286,7 +297,7 @@ def _download_dukascopy(
             h = fmt.format(float(row.get("high", 0)))
             l = fmt.format(float(row.get("low", 0)))
             c = fmt.format(float(row.get("close", 0)))
-            vol = int(float(row.get("volume", 0)))
+            vol = int(float(row.get("volume", 0)) * _vol_scale)
             f.write(f"{date_str},{time_str},{o},{h},{l},{c},{vol},{vol},0\n")
             lines += 1
 

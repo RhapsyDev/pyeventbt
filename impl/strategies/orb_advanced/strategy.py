@@ -54,7 +54,7 @@ class ORBAdvancedStrategy:
     session_end_hour  : Hora de cierre forzado EOD (hora broker).
     orb_base_timeframe: Timeframe de formación del rango (ej. FIVE_MIN).
     breakout_timeframe: Timeframe de detección de ruptura (ej. ONE_MIN).
-    entry_calculator  : Instancia de EntryCalculator (BREAKOUT o RETEST).
+    entry_calculator  : Instancia de EntryCalculator (BREAKOUT, RETEST_ORB, FVG_RETEST, ...).
     sl_calculator     : Instancia de StopLossCalculator (OPPOSITE_RANGE o MID_RANGE).
     tp_calculator     : Instancia de TakeProfitCalculator (TP_Fixed o TP_Trailing).
     rr_ratio          : R:R para TP fijo (ignorado si tp_calculator es TP_Trailing).
@@ -75,23 +75,46 @@ class ORBAdvancedStrategy:
         sl_calculator: StopLossCalculator,
         tp_calculator: TakeProfitCalculator,
         rr_ratio: float,
+        risk_pct: float,
         state: ORBStateManager,
         logger,
         verbose_mode: bool = False,
+        utc_offset_hours: int = 3,
+        is_backtest: bool = True,
     ):
         self.strategy_id       = strategy_id
         self.symbols           = symbols
-        self.sessions_config   = sessions
-        self.session_end_hour  = session_end_hour
         self.orb_base_timeframe  = orb_base_timeframe
         self.breakout_timeframe  = breakout_timeframe
         self.entry_calculator  = entry_calculator
         self.sl_calculator     = sl_calculator
         self.tp_calculator     = tp_calculator
         self.rr_ratio          = rr_ratio
+        self.risk_pct          = risk_pct
         self.state             = state
         self.logger            = logger
         self.verbose_mode      = verbose_mode
+        self._utc_offset       = timedelta(hours=utc_offset_hours)
+        self._is_backtest      = is_backtest
+
+        # BACKTEST: session config in broker time → convert to UTC
+        # LIVE: keep as-is (MT5 timestamps already in broker time)
+        if is_backtest:
+            self.sessions_config = {}
+            for name, conf in sessions.items():
+                c = dict(conf)
+                bt_start = c["start_time"]
+                utc_start = (datetime.combine(datetime(2000, 1, 1), bt_start)
+                             - self._utc_offset).time()
+                c["start_time"] = utc_start
+                self.sessions_config[name] = c
+            self.session_end_hour = (
+                datetime.combine(datetime(2000, 1, 1), session_end_hour)
+                - self._utc_offset
+            ).time()
+        else:
+            self.sessions_config = sessions
+            self.session_end_hour = session_end_hour
 
         # Estado por símbolo × sesión (reiniciado cada día)
         self.strategy_state: Dict[str, Dict[str, OrbSessionState]] = {
@@ -158,6 +181,7 @@ class ORBAdvancedStrategy:
             self._session_complete_logged = False
             self.state.summarized_sessions.clear()
             self.state.session_positions.clear()
+            self.state.session_risk_pool.clear()
             return True
         return False
 
@@ -313,6 +337,11 @@ class ORBAdvancedStrategy:
 
                 if in_window:
                     if not session_state.session_open_logged:
+                        if session_name not in self.state.session_risk_pool:
+                            self.state.session_risk_pool[session_name] = {
+                                "budget_pct": float(self.risk_pct),
+                                "pending_symbols": set(self.symbols),
+                            }
                         self._log(
                             f"[{session_name}] [{_fmt_time(current_datetime)}] [{symbol}]: "
                             f"{session_name} SESSION OPEN NOW!"
@@ -353,9 +382,15 @@ class ORBAdvancedStrategy:
                         divisor  = Decimal(10 ** event.data.digits)
                         bar_high = Decimal(str(event.data.high)) / divisor
                         bar_low  = Decimal(str(event.data.low))  / divisor
+                        bar_close = Decimal(str(event.data.close)) / divisor
                         session_state.orb_high = max(session_state.orb_high, bar_high)
                         session_state.orb_low  = min(session_state.orb_low,  bar_low)
                         session_state.bar_ranges.append(bar_high - bar_low)
+                        # -- Acumulacion para filtros volumen / VWAP --
+                        tv = event.data.tickvol
+                        session_state.orb_tickvols.append(tv)
+                        session_state.orb_cumulative_tickvol += tv
+                        session_state.orb_cumulative_pv += bar_close * Decimal(str(tv))
                     continue
 
                 session_state.orb_accumulating = False
@@ -422,9 +457,11 @@ class ORBAdvancedStrategy:
                         session_state.breakout_occurred = True
                         session_state.breakout_high     = bar_high
                         session_state.breakout_low      = bar_low
+                        session_state.breakout_bar_tickvol = event.data.tickvol
+                        session_state.breakout_bar_range   = bar_high - bar_low
 
                         if self.entry_calculator.on_breakout(signal_type, event, session_state):
-                            # Entrada inmediata (BREAKOUT mode)
+                            # Entrada inmediata
                             se = self._build_signal(
                                 event, session_state, signal_type, session_name,
                                 bar_high, bar_low, modules, current_datetime,
@@ -432,19 +469,39 @@ class ORBAdvancedStrategy:
                             if se:
                                 signal_events.append(se)
                                 session_state.breakout_attempted = True
-                        else:
-                            # Esperar retest
+                        elif self.entry_calculator.supports_retest and self.entry_calculator.has_retest_setup(session_state):
+                            # Modo retest (RETEST_ORB / FVG_RETEST)
                             session_state.retest_mode      = True
                             session_state.retest_direction = signal_type
                             session_state.retest_boundary  = (
                                 session_state.orb_high if signal_type == SignalType.BUY
                                 else session_state.orb_low
                             )
-                            self._log(
+                            if session_state.fvg_high is not None:
+                                self._log(
+                                    f"[{session_name}] [{_fmt_time(current_datetime)}] [{symbol}]: "
+                                    f"Waiting for FVG retest zone {session_state.fvg_low:.2f} - {session_state.fvg_high:.2f}..."
+                                )
+                            else:
+                                self._log(
+                                    f"[{session_name}] [{_fmt_time(current_datetime)}] [{symbol}]: "
+                                    f"Waiting for retest at {session_state.retest_boundary:.2f}..."
+                                )
+                        else:
+                            # Filtros de confirmacion rechazaron la entrada
+                            self._debug(
                                 f"[{session_name}] [{_fmt_time(current_datetime)}] [{symbol}]: "
-                                f"Waiting for retest at {session_state.retest_boundary:.2f}..."
+                                f"Breakout {signal_type.name} rejected by entry filters"
+                            )
+                            session_state.breakout_attempted = True
+                            self.state.cancelled["expired"][symbol] = (
+                                self.state.cancelled["expired"].get(symbol, 0) + 1
                             )
                         continue
+
+                    # ── No breakout this bar: track for FVG detection ────────
+                    session_state.last_bar_high = bar_high
+                    session_state.last_bar_low  = bar_low
 
                 # ── Verificación de retest ───────────────────────────────────
                 if session_state.retest_mode and not session_state.breakout_attempted:
@@ -537,6 +594,10 @@ class ORBAdvancedStrategy:
             tp=tp_price,
         )
 
+        self.state.pending_signals = [
+            s for s in self.state.pending_signals
+            if _clean_symbol(s["symbol"]) != symbol
+        ]
         self.state.pending_signals.append({
             "symbol":       event.symbol,
             "entry":        entry_price,
